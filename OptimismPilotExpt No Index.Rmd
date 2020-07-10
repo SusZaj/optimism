@@ -1,0 +1,338 @@
+---
+title: "Optimism Pilot Study"
+author: "Susi Zajitschek"
+date: "17 April 2019"
+output: 
+  html_document:
+    code_download: true
+    code_folding: hide
+    depth: 4
+    number_sections: no
+    theme:  flatly
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  cache = TRUE,
+  tidy = TRUE
+)
+```
+# Load data
+```{r}
+opt <- read.csv(file = "OptNewB.csv")
+str(opt)
+#size<- read.csv(file = "data/Size fish optimism.csv" # already
+#opt$size <- size$size[match(opt$Fish_ID, size$Fish_ID)]
+```
+
+
+
+#Add a Charater variable for each week
+```{r}
+Opt <- opt 
+  #mutate(weekB = sprintf("%s-%s", "Week", Week))
+  Opt$Week <- as.character(Opt$Week)
+#str(Opt)
+
+```
+Packages loaded
+```{r include=FALSE}
+library(dplyr)
+library(tidyverse)
+library(lme4)
+library(ggplot2) 
+library(DHARMa)
+library(multcomp)
+library(lmerTest)
+library(ggbeeswarm)
+library(rptR)
+library(kableExtra)
+# Hamza's summary tables: sjPlot
+library(sjPlot) #use: tab_model() ...
+```
+
+## Main variable 
+I have tested all possible variables, but this seemed most meaningful: 
+### Time very near to stimulus
+```{r}
+
+opt2 = lmer(data=Opt, (Time5cm) ~ (1|Fish_ID) + Treat * Week + video + First + Size + Sex )
+anova(opt2)
+
+summary(glht(opt2, linfct=mcp(Week="Tukey")))
+summary(glht(opt2, linfct=mcp(Treat="Tukey")))
+tab_model(opt2)
+
+opt3 = lmer(data=Opt, (Time5cm) ~ (1|Fish_ID) + Treat  )
+anova(opt3)
+tab_model(opt3)
+```
+
+Normatlity check (not great, but better than all possible transformations)
+
+```{r}
+qqnorm(resid(opt2)) # skewed but ok // better than transformed versions...
+# check model assumptions
+
+simulationOpt2 <- simulateResiduals(fittedModel = opt2, n = 250) #n controls the number of simulations
+#plot(simulationOpt2)
+#plot(simulateResiduals(simulationOpt2))
+```
+
+PLOT: Beeswarm / Forest with box overlay
+```{r}
+forest.plot.T5cm <- opt %>%
+  
+  mutate(Treat = factor(Treat, levels = c("Pos", "Amb", "Neg"))) %>%
+  ggplot(aes(x = Treat, y = Time5cm, colour = Treat, fill = Treat)) + 
+  geom_hline(yintercept = 0, linetype = 2) + 
+  geom_hline(yintercept = 0.23, linetype = 2, colour = "steelblue", size = 1) +
+  geom_quasirandom(data = opt %>% 
+                     mutate(Treat = factor(Treat, levels = c("Pos", "Amb", "Neg"))),
+                   aes(x = Treat, y = Time5cm), alpha=0.4) +
+  #geom_errorbar(mapping = aes(ymin = LCI, ymax = UCI), width = 0, position = pd, size=1, colour = "grey10") + 
+  #geom_point( size=3.25, shape = 23, stroke = .75, color = "grey10") +  #position = pd,
+ 
+  ylab("Time spent closest to screen [0-5cm] ") +
+  theme_minimal(14) +
+  theme(panel.grid.major.y = element_blank(), 
+        panel.grid.minor.y = element_blank(), 
+        legend.position = "none",
+        axis.text.y = element_text(size = 13, hjust = 1)) +
+  scale_color_manual(values = c("Neg" = "#a50f15", "Amb" = "#fe9929", "Pos" = "#4daf4a"), 
+                     #name = "Relationship\nto fitness")+
+  scale_fill_manual(values = c("Neg" = "#a50f15", "Amb" = "#fe9929", "Pos" = "#4daf4a")))
+
+forest.plot.T5cm +  geom_boxplot(fill= NA, notch = TRUE )
+```
+
+Individual variation plot
+```{r}
+Time5cm.plot <- opt %>% 
+  mutate(Treat = factor(Treat, levels = c("Pos", "Amb", "Neg"))) %>%
+  group_by(Sex, Fish_ID, Treat) %>% 
+  summarise(TimeNearestStimulus = mean(Time5cm, na.rm = TRUE)) %>% 
+  ggplot(aes(Treat, TimeNearestStimulus, group = Fish_ID, colour = factor(Fish_ID))) +
+  geom_line(alpha = 0.3) + 
+  theme(legend.position="none") +
+  facet_grid(Sex ~ .) +
+  labs(title = "Time spent within 5cm from Stimulus")
+
+Time5cm.plot
+```
+
+##Repeatability
+## for each fish, separately for each stimulus
+```{r}
+OptN <- subset(Opt, Treat == "Neg") 
+OptP <- subset(Opt, Treat == "Pos") 
+OptA <- subset(Opt, Treat == "Amb") 
+
+citation("rptR")
+
+rpt(Time5cm ~ (1 | Fish_ID) , grname = "Fish_ID", data = OptN, datatype = "Gaussian", 
+      nboot = 0, npermut = 0)      #R=0.103
+  
+rpt(Time5cm ~ (1 | Fish_ID), grname = "Fish_ID", data = OptP, datatype = "Gaussian", 
+    nboot = 0, npermut = 0)   #R=0.148
+
+rpt(Time5cm ~ (1 | Fish_ID), grname = "Fish_ID", data = OptA, datatype = "Gaussian", 
+    nboot = 0, npermut = 0)   #R=0.213
+```
+
+across weeks (but not taking order into account (?)
+```{r}
+cmStim <- rpt(Time5cm ~ Treat + Week + First + Size + Sex + video+ (1 | Fish_ID), grname = "Fish_ID", data = opt, datatype = "Gaussian", nboot = 0, npermut = 0)
+summary(cmStim)
+str(opt)
+
+```
+
+```{r}
+#Across weeks
+Time5cm.plot <- Opt %>% 
+  mutate(Week = factor(Week, levels = c("1", "2", "3"))) %>%
+  group_by(Sex, Fish_ID, Treat, Week) %>% 
+  #summarise(TimeNearestStimulus = mean(Time5cm, na.rm = TRUE)) %>% 
+  ggplot(aes(Week, Time5cm, group = Fish_ID, colour = factor(Fish_ID))) +
+  geom_line(alpha = 0.3) +
+  theme(legend.position="none") +
+  facet_grid(Treat ~ . ) +
+  
+  labs(title = "Time spent within 5cm from Stimulus")
+
+Time5cm.plot
+```
+# ok, so what does this all show me?
+Ambigous cues lie in the middle between positive and negative cues.
+Animals spend less time close to negative cue than at positive one.
+
+Effect seems to be most repeatable (consistent?) for ambigous cues: r=0.21.
+
+What do I want to know?
+
+# HAMZA: ignore below. 
+I spend a lot of time trying to come u with different indices, that just doesn't work...
+
+
+# Optimism Index
+### for time spent very near stimulus
+Fish that are >0.5 are optimistic, Fish <0.5 pessimistic
+
+## (time spent close to ambig – time spent close to neg) / (time spent close to pos – time spent close to neg)
+```{r eval=FALSE, include=FALSE}
+optindex3  <- opt %>%
+  mutate(sqrt5cm = sqrt(Time5cm)) %>%
+  dplyr::select( Fish_ID, Week, Treat, sqrt5cm )  %>% # sqrt5cm
+  spread(Treat, sqrt5cm) %>%
+  mutate( (Amb-Neg)/(Pos-Neg))
+optindex3
+
+colnames(optindex3)
+optindex3 <- optindex3 %>% rename(index = "(Amb - Neg)/(Pos - Neg)")
+colnames(optindex3)
+
+nrow(optindex3[optindex3$index > 0.5, ]) # 385
+nrow(optindex3[optindex3$index < 0.5, ]) #  115
+
+nrow(optindex3raw$index = "NaN") 
+sum(is.na(optindex3raw$index)) #16
+sum(is.na(optindex3log$index)) #46
+sum(is.na(optindex3$index)) #0
+
+```
+
+repeatability of the optimism indx
+across weeks (but not taking order into account (?) 
+NO SENSIBLE RESULT. 
+
+```{r eval=FALSE, include=FALSE}
+optindex4  <- optindex3 %>%
+  unite_("Fish", c("Fish_ID", "Week"), remove = FALSE)
+
+optind <- optindex4[ !(optindex4$Fish %in% c("26_3","30_2","52_1","55_1", "82_2", "83_1", "93_3", "94_3", "95_3", "112_3", "113_1", "115_1", "115_2", "116_3", "123_2", "126_3", "127_1", "133_3", "139_2", "143_2","147_2", "155_2" )), ]
+
+ind <- rpt(index ~   (1 | Fish_ID), grname = "Fish_ID", data = optind, datatype = "Gaussian", nboot = 0, npermut = 0) 
+summary(ind)
+tab_model(ind)
+
+rpt(index ~ (1 | Fish_ID), grname = "Fish_ID", data = optind, datatype = "Gaussian", 
+      nboot = 0, npermut = 0) #doesn't work
+```
+But maybe plot the indices?
+
+FIRST, take RELATIVE time :percentage of time spent in pos/amb/neg:
+i.e. each column: (x/180)*100
+
+
+```{r eval=FALSE, include=FALSE}
+optindex3$AmbP <- (optindex3$Amb / 180)*100
+optindex3$NegP <- (optindex3$Neg / 180)*100
+optindex3$PosP <- (optindex3$Pos / 180)*100
+
+optindex3b  <- optindex3 %>%
+  mutate( (Amb/(Amb+Neg+Pos)-(Neg/(Amb+Neg+Pos)))/(Pos/(Amb+Neg+Pos)-Neg/(Amb+Neg+Pos)))
+optindex3b
+
+
+```
+
+Plot idex across weeks
+```{r eval=FALSE, include=FALSE}
+Time5cm.index.plot <- optindex3 %>% 
+  ggplot(aes(Week, index, group = Fish_ID, colour = factor(Fish_ID))) +
+  geom_point(alpha = 0.3) +
+  geom_line(alpha = 0.3) +
+  theme(legend.position="none") +
+  labs(title = "Time spent within 5cm from Stimulus")
+
+Time5cm.index.plot
+```
+ok, that's shit, still... 
+
+
+```{r eval=FALSE, include=FALSE}
+hist(optind$index)
+optind$index2 <- optind$index^2
+```
+
+SO TRY DISTANCE TRAVELLED
+
+#Optimism Index
+## for TOTAL DISTANCE TRAVELLED
+Fish that are >0.5 are optimistic, Fish <0.5 pessimistic
+
+## 
+```{r eval=FALSE, include=FALSE}
+optDist  <- opt %>%
+ # mutate(dist = sqrt(Time5cm)) %>%
+  dplyr::select( Fish_ID, Week, Treat, TotalDist)  %>%
+  spread(Treat, TotalDist) %>%
+  mutate( (Amb-Neg)/(Pos-Neg))
+optDist
+
+names(optDist)[6] <- "indexD"
+
+nrow(optDist[optDist$indexD > 0.5, ]) # 326
+nrow(optDist[optDist$indexD < 0.5, ]) #  158
+
+```
+
+repeatability of the optimism indx
+across weeks (but not taking order into account (?)
+```{r eval=FALSE, include=FALSE}
+optindex4  <- optindex3 %>%
+  unite_("Fish", c("Fish_ID", "Week"), remove = FALSE)
+
+optind <- optindex4[ !(optindex4$Fish %in% c("26_3","30_2","52_1","55_1", "82_2", "83_1", "93_3", "94_3", "95_3", "112_3", "113_1", "115_1", "115_2", "116_3", "123_2", "126_3", "127_1", "133_3", "139_2", "143_2","147_2", "155_2" )), ]
+
+ind <- rpt(indexD ~   (1 | Fish_ID), grname = "Fish_ID", data = optDist, datatype = "Gaussian", nboot = 0, npermut = 0) 
+summary(ind)
+
+rpt(index ~ (1 | Fish_ID), grname = "Fish_ID", data = optind, datatype = "Gaussian", 
+      nboot = 0, npermut = 0) #doesn't work
+```
+
+Plot idex across weeks
+```{r eval=FALSE, include=FALSE}
+Time5cm.index.plot <- optind %>% 
+  ggplot(aes(Week, index, group = Fish_ID, colour = factor(Fish_ID))) +
+  geom_line(alpha = 0.3) +
+  theme(legend.position="none") +
+  labs(title = "Time spent within 5cm from Stimulus")
+
+Time5cm.index.plot
+```
+ok, that's shit, so far...
+```{r eval=FALSE, include=FALSE}
+kable(cbind (optindex2,optindex2)) %>%
+  kable_styling() %>%
+  scroll_box(width = "100%", height = "200px")
+```
+
+```{r eval=FALSE, include=FALSE}
+neutral <- filter(optindex2, index > 0.4, index < 0.6) #52 obs
+
+noextremes <- filter(optindex2, index > -10, index < 10)
+```
+
+```{r eval=FALSE, include=FALSE}
+Time5cm.index.plot <- noextremes %>% 
+  ggplot(aes(Week, index, group = Fish_ID, colour = factor(Fish_ID))) +
+  geom_line(alpha = 0.3) +
+  theme(legend.position="none") +
+  labs(title = "Time spent within 5cm from Stimulus")
+
+Time5cm.index.plot
+```
+
+
+index on distance
+remove non-moving fish
+sqroot 
